@@ -1,0 +1,281 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Override ref name (used in DMG filename); leave blank for HEAD short SHA'
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so we can read annotated tag messages and accurate
+          # commit counts for the build number.
+          fetch-depth: 0
+
+      - name: Select Xcode (latest stable)
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Compute build identifiers from ref
+        id: ver
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            REF="${{ github.ref_name }}"
+          elif [[ -n "${{ github.event.inputs.tag_name }}" ]]; then
+            REF="${{ github.event.inputs.tag_name }}"
+          else
+            REF="dev-$(git rev-parse --short HEAD)"
+          fi
+          # strip leading "v" for the marketing version (1.0.1-tahoe.1, not v1.0.1-tahoe.1)
+          VERSION="${REF#v}"
+          # CFBundleVersion must be a dotted-numeric string; derive from commit count
+          BUILD=$(git rev-list --count HEAD)
+          echo "ref=$REF"            >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION"    >> "$GITHUB_OUTPUT"
+          echo "build=$BUILD"        >> "$GITHUB_OUTPUT"
+          echo "Will build ref=$REF version=$VERSION build=$BUILD"
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Archive (Release, ad-hoc signed, no team)
+        run: |
+          set -euxo pipefail
+          xcodebuild \
+            -scheme FreeDisplay \
+            -configuration Release \
+            -archivePath build/FreeDisplay.xcarchive \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="" \
+            MARKETING_VERSION="${{ steps.ver.outputs.version }}" \
+            CURRENT_PROJECT_VERSION="${{ steps.ver.outputs.build }}" \
+            archive
+          test -d build/FreeDisplay.xcarchive
+
+      - name: Export .app
+        run: |
+          set -euxo pipefail
+          xcodebuild \
+            -exportArchive \
+            -archivePath build/FreeDisplay.xcarchive \
+            -exportPath build/export \
+            -exportOptionsPlist ExportOptions.plist
+          test -d build/export/FreeDisplay.app
+
+      - name: Deep ad-hoc re-sign every nested binary
+        # An incomplete signature (any nested dylib/framework unsigned or with
+        # a stale signature) is one of the most common causes of macOS showing
+        # "the application is damaged" on first launch. A deep ad-hoc resign
+        # guarantees every embedded Mach-O is signed with the same identity.
+        run: |
+          set -euxo pipefail
+          codesign --force --deep --sign - \
+            --options runtime \
+            --entitlements FreeDisplay/FreeDisplay.entitlements \
+            build/export/FreeDisplay.app
+          codesign --verify --deep --strict --verbose=2 build/export/FreeDisplay.app
+          codesign -dvv build/export/FreeDisplay.app
+
+      - name: Build DMG (drag-to-Applications layout)
+        run: |
+          set -euxo pipefail
+          STAGING=build/dmg-staging
+          rm -rf "$STAGING"
+          mkdir -p "$STAGING"
+          cp -R build/export/FreeDisplay.app "$STAGING/"
+          # Symlink so users see /Applications in the DMG window for drag-install
+          ln -s /Applications "$STAGING/Applications"
+
+          DMG_PATH="build/FreeDisplay-${{ steps.ver.outputs.ref }}.dmg"
+          hdiutil create \
+            -volname "FreeDisplay" \
+            -srcfolder "$STAGING" \
+            -ov -format UDZO \
+            "$DMG_PATH"
+
+          # Sign the DMG container itself so its own integrity is verifiable
+          codesign --sign - "$DMG_PATH"
+          codesign --verify --verbose=2 "$DMG_PATH"
+          ls -lah "$DMG_PATH"
+          echo "DMG_PATH=$DMG_PATH" >> "$GITHUB_ENV"
+
+      - name: Upload DMG as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FreeDisplay-${{ steps.ver.outputs.ref }}
+          path: ${{ env.DMG_PATH }}
+          if-no-files-found: error
+
+      - name: Build release body file
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          # actions/checkout checks out the tag target commit. On annotated-tag
+          # workflows the local refs/tags/<tag> can therefore resolve like a
+          # lightweight tag unless we explicitly fetch the tag object.
+          git fetch --force origin "refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}"
+
+          # Extract the annotated-tag message (subject + body), stripping any
+          # PGP signature block. Writing to a file (rather than a multi-line
+          # job output) avoids the YAML/templating escape pitfalls that
+          # silently drop the section when fed via `body:` in softprops/action.
+          TAGMSG=$(git for-each-ref "refs/tags/${{ github.ref_name }}" \
+            --format='%(contents:subject)%0a%0a%(contents:body)' \
+            | sed -e '/^-----BEGIN PGP SIGNATURE-----$/,$d')
+          if [[ -z "$(printf '%s' "$TAGMSG" | tr -d '[:space:]')" ]]; then
+            TAGMSG="Tag ${{ github.ref_name }} — see commit history for details."
+          fi
+          cat > build/release-body.md <<MARKDOWN
+          ## What's new in ${{ github.ref_name }}
+
+          $TAGMSG
+
+          ---
+
+          ## ⚠️ First Launch — Read This First
+
+          This release is **ad-hoc signed** (not notarized by Apple, because
+          notarization requires a paid Developer ID). On first launch macOS
+          Gatekeeper will likely refuse to open the app with one of:
+
+          - **"FreeDisplay" is damaged and can't be opened. You should move it to the Trash.**
+          - **"FreeDisplay" can't be opened because Apple cannot check it for malicious software.**
+
+          **Neither message is real damage** — both are Gatekeeper warnings
+          against unsigned/un-notarized apps. Pick one of the two fixes:
+
+          **Option A (recommended, one terminal command):**
+          \`\`\`bash
+          sudo xattr -rd com.apple.quarantine /Applications/FreeDisplay.app
+          \`\`\`
+          Then double-click FreeDisplay to launch.
+
+          **Option B (GUI):**
+          System Settings → Privacy & Security → scroll down to the
+          "FreeDisplay was blocked…" message → click **Open Anyway**.
+
+          After this one-time approval the app launches normally forever.
+
+          ---
+
+          ## Installation
+
+          1. Download \`FreeDisplay-${{ steps.ver.outputs.ref }}.dmg\` below
+          2. Open the DMG, drag **FreeDisplay.app** into **Applications**
+          3. Apply one of the fixes above
+          4. Click the display icon in your menu bar to use FreeDisplay
+
+          ## Documentation
+
+          - [English README](https://github.com/Akuwatoga/FreeDisplay/blob/main/README.md)
+          - [简体中文 README](https://github.com/Akuwatoga/FreeDisplay/blob/main/README.zh-CN.md)
+          MARKDOWN
+
+          echo "----- release body preview -----"
+          cat build/release-body.md
+          echo "----- end preview -----"
+
+      - name: Publish release via GitHub API (delete-then-create for guaranteed body refresh)
+        # softprops/action-gh-release@v2 silently keeps the body of an already-
+        # existing release when run in update mode (observed: re-pushed
+        # v1.0.4-tahoe.1 still showed the v1.0.3 body). Use the REST API
+        # directly so every tag push recreates the release body and asset while
+        # preserving the tag.
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import json
+          import mimetypes
+          import os
+          import sys
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          tag = os.environ["GITHUB_REF_NAME"]
+          token = os.environ["GH_TOKEN"]
+          dmg_path = os.environ["DMG_PATH"]
+
+          with open("build/release-body.md", "r", encoding="utf-8") as handle:
+            body = handle.read()
+
+          api = f"https://api.github.com/repos/{repo}"
+          headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+          }
+
+          def request(method, url, payload=None, content_type="application/json"):
+            data = None
+            request_headers = dict(headers)
+            if payload is not None:
+              if isinstance(payload, bytes):
+                data = payload
+              else:
+                data = json.dumps(payload).encode("utf-8")
+              request_headers["Content-Type"] = content_type
+
+            req = urllib.request.Request(url, data=data, headers=request_headers, method=method)
+            try:
+              with urllib.request.urlopen(req) as response:
+                raw = response.read()
+                if not raw:
+                  return None
+                return json.loads(raw.decode("utf-8"))
+            except urllib.error.HTTPError as error:
+              raw = error.read().decode("utf-8", errors="replace")
+              if error.code == 404:
+                return {"_not_found": True}
+              print(raw, file=sys.stderr)
+              raise
+
+          existing = request("GET", f"{api}/releases/tags/{urllib.parse.quote(tag, safe='')}")
+          if existing and not existing.get("_not_found"):
+            print(f"Existing release for {tag} found; deleting release while preserving tag.")
+            request("DELETE", f"{api}/releases/{existing['id']}")
+
+          print(f"Creating release {tag}.")
+          release = request("POST", f"{api}/releases", {
+            "tag_name": tag,
+            "name": tag,
+            "body": body,
+            "draft": False,
+            "prerelease": False,
+          })
+
+          asset_name = os.path.basename(dmg_path)
+          content_type = mimetypes.guess_type(dmg_path)[0] or "application/octet-stream"
+          upload_url = release["upload_url"].split("{", 1)[0]
+          upload_url = f"{upload_url}?name={urllib.parse.quote(asset_name)}"
+          with open(dmg_path, "rb") as handle:
+            request("POST", upload_url, handle.read(), content_type)
+
+          print(f"Published {tag} with asset {asset_name}.")
+          PY
