@@ -41,6 +41,13 @@ class DisplayManager: ObservableObject {
     /// Work item used to debounce auto-arrange calls triggered by display config changes.
     private var autoArrangeWorkItem: DispatchWorkItem?
 
+    /// Display IDs the last auto-arrange was applied to. Auto-arrange only runs
+    /// when this set changes (a display was plugged in or unplugged) — a manual
+    /// drag in System Settings or ArrangementView leaves the set unchanged, so
+    /// it is never fought by a re-apply. `force: true` (preference change,
+    /// first launch) bypasses this guard.
+    private var lastAutoArrangedDisplayIDs: Set<CGDirectDisplayID> = []
+
     init() {
         refreshDisplays()
         setupReconfigCallback()
@@ -89,7 +96,7 @@ class DisplayManager: ObservableObject {
         displays = updatedDisplays
         DisplayManagerAccessor.shared.displays = updatedDisplays
 
-        // Regenerate built-in presets (HiDPI 模式 / 原生模式) from updated display list.
+        // Regenerate built-in presets (HiDPI mode / Native mode) from updated display list.
         PresetService.shared.refreshBuiltins()
 
         // Only load details / refresh brightness for newly appeared displays
@@ -158,12 +165,12 @@ class DisplayManager: ObservableObject {
         }
     }
 
-    /// Debounces calls to `arrangeExternalAboveBuiltin()` — coalesces bursts of config-change
+    /// Debounces calls to `arrangeExternalDisplay()` — coalesces bursts of config-change
     /// callbacks into a single rearrange that fires 500 ms after the last callback arrives.
     func scheduleAutoArrange() {
         autoArrangeWorkItem?.cancel()
         let item = DispatchWorkItem { [weak self] in
-            self?.arrangeExternalAboveBuiltin()
+            self?.arrangeExternalDisplay()
         }
         autoArrangeWorkItem = item
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: item)
@@ -209,30 +216,95 @@ class DisplayManager: ObservableObject {
         }
     }
 
-    /// Positions all external displays above the built-in display, centered horizontally.
-    /// Controlled by the UserDefaults key `fd.arrangement.externalAbove`.
+    /// Positions external displays relative to the built-in display when one is
+    /// plugged in, per `SettingsService.externalPosition` (`fd.arrangement.externalPosition`):
+    /// `.left` (default) — externals stacked left-to-right at (0, 0), built-in to
+    /// their right, top-aligned; the external at the origin becomes the main display.
+    /// `.right` — built-in at (0, 0), externals stacked to its right, top-aligned.
+    /// `.above` — each external centered above the built-in (previous behaviour).
+    /// `.off` — does nothing.
     /// Does nothing if there is no built-in display or no external displays.
-    func arrangeExternalAboveBuiltin() {
-        guard UserDefaults.standard.bool(forKey: "fd.arrangement.externalAbove") else { return }
+    /// Runs only when the online display set changed since the last auto-arrange
+    /// (so a manual drag is left alone), unless `force` is true, and skips when
+    /// the current origins already match the target within 1 px (so our own
+    /// reconfiguration callback cannot loop).
+    func arrangeExternalDisplay(force: Bool = false) {
+        let position = SettingsService.shared.externalPosition
+        guard position != .off else { return }
 
         guard let builtin = displays.first(where: { $0.isBuiltin }) else { return }
         let externals = displays.filter { !$0.isBuiltin }
         guard !externals.isEmpty else { return }
 
-        let builtinX = Int(builtin.bounds.origin.x)
-        let builtinY = Int(builtin.bounds.origin.y)
-        let builtinWidth = Int(builtin.bounds.width)
+        let currentIDs = Set(displays.map { $0.displayID })
+        if !force, currentIDs == lastAutoArrangedDisplayIDs { return }
 
-        let arrangeItems = externals.map { ext in
-            let extWidth = Int(ext.bounds.width)
-            let centeredX = builtinX + (builtinWidth - extWidth) / 2
-            return (id: ext.displayID, x: centeredX, y: builtinY - Int(ext.bounds.height))
-        }
-        Task { @MainActor in
-            for item in arrangeItems {
-                await ArrangementService.shared.setPosition(x: item.x, y: item.y, for: item.id)
+        let targets = Self.arrangementTargets(
+            position: position, builtin: builtin, externals: externals
+        )
+        let alreadyThere = targets.allSatisfy { target in
+            displays.contains {
+                $0.displayID == target.id
+                && abs(Int($0.bounds.origin.x) - target.x) <= 1
+                && abs(Int($0.bounds.origin.y) - target.y) <= 1
             }
-            self.refreshDisplays()
+        }
+        if alreadyThere {
+            lastAutoArrangedDisplayIDs = currentIDs
+            return
+        }
+
+        Task { @MainActor in
+            let ok = await ArrangementService.shared.setPositions(targets)
+            if ok {
+                self.lastAutoArrangedDisplayIDs = currentIDs
+                self.refreshDisplays()
+            }
+        }
+    }
+
+    /// Pure layout maths for `arrangeExternalDisplay()` (no side effects, so the
+    /// positions are unit-checkable). Sizes are logical points from `bounds`.
+    /// - left: externals in displayID order from x = 0, built-in after the last one.
+    /// - right: built-in at (0, 0), externals after it in displayID order.
+    /// - above: each external centered horizontally above the built-in.
+    /// - off: no targets (callers guard this, but returns [] for safety).
+    static func arrangementTargets(
+        position: SettingsService.ExternalPosition,
+        builtin: DisplayInfo,
+        externals: [DisplayInfo]
+    ) -> [(id: CGDirectDisplayID, x: Int, y: Int)] {
+        let sortedExternals = externals.sorted { $0.displayID < $1.displayID }
+        switch position {
+        case .off:
+            return []
+        case .above:
+            let builtinX = Int(builtin.bounds.origin.x)
+            let builtinY = Int(builtin.bounds.origin.y)
+            let builtinWidth = Int(builtin.bounds.width)
+            return sortedExternals.map { ext in
+                let extWidth = Int(ext.bounds.width)
+                let centeredX = builtinX + (builtinWidth - extWidth) / 2
+                return (id: ext.displayID, x: centeredX, y: builtinY - Int(ext.bounds.height))
+            }
+        case .left:
+            var targets: [(id: CGDirectDisplayID, x: Int, y: Int)] = []
+            var x = 0
+            for ext in sortedExternals {
+                targets.append((id: ext.displayID, x: x, y: 0))
+                x += Int(ext.bounds.width)
+            }
+            targets.append((id: builtin.displayID, x: x, y: 0))
+            return targets
+        case .right:
+            var targets: [(id: CGDirectDisplayID, x: Int, y: Int)] = []
+            targets.append((id: builtin.displayID, x: 0, y: 0))
+            var x = Int(builtin.bounds.width)
+            for ext in sortedExternals {
+                targets.append((id: ext.displayID, x: x, y: 0))
+                x += Int(ext.bounds.width)
+            }
+            return targets
         }
     }
 }

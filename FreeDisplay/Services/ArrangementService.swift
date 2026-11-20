@@ -29,6 +29,31 @@ class ArrangementService {
         }
     }
 
+    /// Moves several displays in ONE Begin→Origin→Complete transaction, so the
+    /// whole layout changes atomically instead of one transaction per display
+    /// (separate transactions can fight each other mid-layout).
+    /// The entire transaction runs inside `CGHelpers.runWithTimeout`
+    /// so `CGCompleteDisplayConfiguration` cannot block indefinitely on WindowServer IPC.
+    /// - Returns: true if the configuration was applied successfully.
+    @discardableResult
+    func setPositions(_ positions: [(id: CGDirectDisplayID, x: Int, y: Int)]) async -> Bool {
+        guard !positions.isEmpty else { return true }
+        return await CGHelpers.runWithTimeout(seconds: 10, fallback: false) {
+            var config: CGDisplayConfigRef?
+            guard CGBeginDisplayConfiguration(&config) == .success,
+                  let cfg = config else { return false }
+            for pos in positions {
+                CGConfigureDisplayOrigin(cfg, pos.id, Int32(pos.x), Int32(pos.y))
+            }
+            let result = CGCompleteDisplayConfiguration(cfg, .forSession)
+            if result != .success {
+                CGCancelDisplayConfiguration(cfg)
+                return false
+            }
+            return true
+        }
+    }
+
     /// Makes the target display the main display by moving it to origin (0, 0).
     /// Moves the current main display to the position previously occupied by the target.
     /// The entire Begin→Origin→Complete transaction runs inside `CGHelpers.runWithTimeout`

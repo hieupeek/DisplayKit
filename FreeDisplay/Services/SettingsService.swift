@@ -31,40 +31,49 @@ final class SettingsService: ObservableObject, @unchecked Sendable {
         static let ddcCacheTTL            = "fd.ddcCacheTTL"
         static let checkUpdatesOnLaunch   = "fd.checkUpdatesOnLaunch"
         static let colorPickerHistory     = "fd.colorPickerHistory"
-        static let preferredLanguage      = "fd.preferredLanguage"
+        static let externalPosition       = "fd.arrangement.externalPosition"
+        /// Legacy key from before the position preference existed: a boolean
+        /// "external above built-in". Read once for migration, then removed.
+        static let legacyExternalAbove    = "fd.arrangement.externalAbove"
         // Per-display keys use prefix + displayID
         static let brightnessPrefix       = "fd.brightness_"
         static let contrastPrefix         = "fd.contrast_"
     }
 
-    // MARK: - Language
+    // MARK: - Auto-Arrange Position
 
-    /// User-selected UI language. `"system"` means follow the system locale.
-    /// Other values are BCP-47 language tags shipped in the catalog (`"zh-Hans"`, `"en"`).
-    enum PreferredLanguage: String, CaseIterable, Identifiable {
-        case system  = "system"
-        case english = "en"
-        case chinese = "zh-Hans"
+    /// Where an external display is placed relative to the built-in display
+    /// when it is plugged in. `.off` disables auto-arranging entirely.
+    enum ExternalPosition: String, CaseIterable, Identifiable {
+        case left  = "left"
+        case right = "right"
+        case above = "above"
+        case off   = "off"
 
         var id: String { rawValue }
 
-        /// Human-readable name shown in the picker, in its own language.
         var displayName: String {
             switch self {
-            case .system:  return NSLocalizedString("跟随系统", comment: "")
-            case .english: return "English"
-            case .chinese: return "简体中文"
+            case .left:  return "Left"
+            case .right: return "Right"
+            case .above: return "Above"
+            case .off:   return "Off"
             }
         }
 
-        /// Resolves to a SwiftUI Locale for `.environment(\.locale, ...)`.
-        /// `.system` returns the system's current locale so SwiftUI uses normal resolution.
-        var resolvedLocale: Locale {
-            switch self {
-            case .system:  return .current
-            case .english: return Locale(identifier: "en")
-            case .chinese: return Locale(identifier: "zh-Hans")
-            }
+        /// Positions offered in the Arrangement picker (`.off` is a toggle, not a position).
+        static var choosable: [ExternalPosition] { [.left, .right, .above] }
+    }
+
+    /// Last non-`.off` position, kept in memory only so turning auto-arrange
+    /// back on restores the previous choice instead of resetting to `.left`.
+    private(set) var lastNonOffPosition: ExternalPosition = .left
+
+    /// Where externals go on connect. Defaults to `.left` for new installs.
+    @Published var externalPosition: ExternalPosition = .left {
+        didSet {
+            if externalPosition != .off { lastNonOffPosition = externalPosition }
+            defaults.set(externalPosition.rawValue, forKey: Keys.externalPosition)
         }
     }
 
@@ -100,11 +109,6 @@ final class SettingsService: ObservableObject, @unchecked Sendable {
         didSet {
             defaults.set(colorPickerHistory, forKey: Keys.colorPickerHistory)
         }
-    }
-
-    /// User's preferred UI language (defaults to `.system`).
-    @Published var preferredLanguage: PreferredLanguage = .system {
-        didSet { defaults.set(preferredLanguage.rawValue, forKey: Keys.preferredLanguage) }
     }
 
     // MARK: - Per-Display Settings
@@ -174,11 +178,23 @@ final class SettingsService: ObservableObject, @unchecked Sendable {
         checkUpdatesOnLaunch = defaults.object(forKey: Keys.checkUpdatesOnLaunch) != nil
             ? defaults.bool(forKey: Keys.checkUpdatesOnLaunch) : true
         colorPickerHistory = defaults.stringArray(forKey: Keys.colorPickerHistory) ?? []
-        if let raw = defaults.string(forKey: Keys.preferredLanguage),
-           let lang = PreferredLanguage(rawValue: raw) {
-            preferredLanguage = lang
-        } else {
-            preferredLanguage = .system
+        externalPosition = Self.resolveExternalPosition(defaults: defaults)
+    }
+
+    /// Resolves the auto-arrange position: the new key wins; otherwise migrate
+    /// the legacy `fd.arrangement.externalAbove` boolean (`true` = above,
+    /// `false` = off) and delete it; otherwise default to `.left`.
+    private static func resolveExternalPosition(defaults: UserDefaults) -> ExternalPosition {
+        if let raw = defaults.string(forKey: Keys.externalPosition),
+           let pos = ExternalPosition(rawValue: raw) {
+            return pos
         }
+        if defaults.object(forKey: Keys.legacyExternalAbove) != nil {
+            let pos: ExternalPosition = defaults.bool(forKey: Keys.legacyExternalAbove) ? .above : .off
+            defaults.set(pos.rawValue, forKey: Keys.externalPosition)
+            defaults.removeObject(forKey: Keys.legacyExternalAbove)
+            return pos
+        }
+        return .left
     }
 }

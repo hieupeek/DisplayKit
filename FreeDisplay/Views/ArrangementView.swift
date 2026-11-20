@@ -5,6 +5,7 @@ import SwiftUI
 /// Supports drag-to-reposition and "Set as main display" button for secondary displays.
 struct ArrangementView: View {
     @EnvironmentObject var displayManager: DisplayManager
+    @ObservedObject private var settings = SettingsService.shared
     @State private var draggedID: CGDirectDisplayID?
     @State private var dragOffset: CGSize = .zero
     @State private var dragError: String?
@@ -39,6 +40,40 @@ struct ArrangementView: View {
                     .transition(.opacity)
             }
 
+            // Auto-arrange on connect: where an external display goes when plugged in.
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle(isOn: Binding(
+                    get: { settings.externalPosition != .off },
+                    set: { on in
+                        settings.externalPosition = on ? settings.lastNonOffPosition : .off
+                    }
+                )) {
+                    Text("Auto-arrange on connect")
+                        .font(.body)
+                }
+                .toggleStyle(.switch)
+                .controlSize(.small)
+
+                Picker("", selection: $settings.externalPosition) {
+                    ForEach(SettingsService.ExternalPosition.choosable) { pos in
+                        Text(pos.displayName).tag(pos)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .disabled(settings.externalPosition == .off)
+                .onChange(of: settings.externalPosition) { _, newValue in
+                    if newValue != .off {
+                        displayManager.arrangeExternalDisplay(force: true)
+                    }
+                }
+
+                Text("Applies when an external display is plugged in")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 8)
+
             // "Set as main display" for non-main displays
             ForEach(displayManager.displays.filter { !$0.isMain }) { display in
                 Button(action: {
@@ -50,7 +85,7 @@ struct ArrangementView: View {
                         if ok { displayManager.refreshDisplays() }
                     }
                 }) {
-                    Label("设 \(display.name) 为主显示器", systemImage: "star.fill")
+                    Label("Set \(display.name) as main display", systemImage: "star.fill")
                         .font(.caption)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)
@@ -59,7 +94,7 @@ struct ArrangementView: View {
                         .cornerRadius(6)
                 }
                 .buttonStyle(.plain)
-                .help("将此显示器设为主显示器")
+                .help("Set this display as main")
             }
         }
         .padding(.horizontal, 8)
@@ -78,7 +113,7 @@ struct ArrangementView: View {
                     x: rect.midX + (isDragged ? dragOffset.width : 0),
                     y: rect.midY + (isDragged ? dragOffset.height : 0)
                 )
-                .help("显示器：\(display.name)")
+                .help("Display: \(display.name)")
                 .gesture(
                     DragGesture()
                         .onChanged { value in
@@ -163,7 +198,7 @@ struct ArrangementView: View {
                 displayManager.refreshDisplays()
             } else {
                 withAnimation(.easeInOut(duration: 0.2)) {
-                    dragError = "显示器排列失败，请重试"
+                    dragError = "Display arrangement failed, please retry"
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
                     withAnimation { self.dragError = nil }
@@ -181,7 +216,7 @@ private struct DisplayThumbnailView: View {
 
     var body: some View {
         ZStack {
-            // 背景填充
+            // Background fill
             RoundedRectangle(cornerRadius: 4)
                 .fill(
                     display.isBuiltin
@@ -198,7 +233,7 @@ private struct DisplayThumbnailView: View {
                         )
                 )
 
-            // 外接显示器顶部装饰横条（边框感）
+            // Decorative top strip for external displays (border effect)
             if !display.isBuiltin {
                 VStack {
                     RoundedRectangle(cornerRadius: 2)
@@ -210,7 +245,7 @@ private struct DisplayThumbnailView: View {
                 .padding(.top, 3)
             }
 
-            // 显示器名称 + 主显示标记
+            // Display name + main display badge
             VStack(spacing: 2) {
                 Text(display.name)
                     .font(.system(size: 8, weight: .medium))
@@ -221,7 +256,7 @@ private struct DisplayThumbnailView: View {
                     HStack(spacing: 2) {
                         Image(systemName: "star.fill")
                             .font(.system(size: 5))
-                        Text("主")
+                        Text("Main")
                             .font(.system(size: 6))
                     }
                     .foregroundColor(display.isBuiltin ? .white.opacity(0.9) : .blue)

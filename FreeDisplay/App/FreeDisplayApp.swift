@@ -4,28 +4,26 @@ import SwiftUI
 struct FreeDisplayApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var displayManager = DisplayManager()
-    // Observe SettingsService so the menu re-renders when the user changes
-    // language via the Settings picker — SwiftUI's LocalizedStringKey lookups
-    // honour the .environment(\.locale, ...) override we apply below.
-    @ObservedObject private var settings = SettingsService.shared
-
     var body: some Scene {
         MenuBarExtra {
             MenuBarView()
                 .environmentObject(displayManager)
-                .environment(\.locale, settings.preferredLanguage.resolvedLocale)
                 .task {
-                    // Enable "external above built-in" arrangement by default on first launch.
+                    // Default auto-arrange on first launch: external display on the
+                    // LEFT of the built-in display. SettingsService migrates the
+                    // legacy fd.arrangement.externalAbove key if it exists; only
+                    // write the new key when neither key has ever been set.
                     let defaults = UserDefaults.standard
-                    if defaults.object(forKey: "fd.arrangement.externalAbove") == nil {
-                        defaults.set(true, forKey: "fd.arrangement.externalAbove")
+                    if defaults.object(forKey: "fd.arrangement.externalPosition") == nil
+                        && defaults.object(forKey: "fd.arrangement.externalAbove") == nil {
+                        defaults.set("left", forKey: "fd.arrangement.externalPosition")
                     }
 
                     // After a 2-second delay (allows displays to fully initialize),
-                    // position any external display above the built-in display.
+                    // position any external display per the saved preference.
                     Task { @MainActor in
                         try? await Task.sleep(nanoseconds: 2_000_000_000)
-                        displayManager.arrangeExternalAboveBuiltin()
+                        displayManager.arrangeExternalDisplay()
                     }
 
                     // Wire up the wake-from-sleep handler so AppDelegate can call back

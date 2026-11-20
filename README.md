@@ -1,6 +1,10 @@
 # FreeDisplay
 
-**English** · [简体中文](README.zh-CN.md)
+> **English-only fork.** Based on [Akuwatoga/FreeDisplay](https://github.com/Akuwatoga/FreeDisplay) v1.0.5-tahoe.1 (commit `a58e485`), itself a fork of [huberdf/FreeDisplay](https://github.com/huberdf/FreeDisplay). All user-visible strings are English literals in the Swift sources; the `Localizable.xcstrings` catalog (source language `zh-Hans`) and the in-app language picker were removed, because on a Mac whose system language is neither English nor Chinese the app fell back to the catalog's Chinese source language and showed a Chinese UI. See [TRANSLATION.md](TRANSLATION.md) for the method and file list.
+>
+> **Auto-arrange on connect:** when an external display is plugged in, it is placed on the **left** of the built-in display by default (external at (0, 0), built-in to its right) — change it in the app under Arrange Displays → "Auto-arrange on connect" (Left / Right / Above / Off). The old `fd.arrangement.externalAbove` setting is migrated automatically. See [TRANSLATION.md](TRANSLATION.md#auto-arrange-on-connect).
+>
+> **TODO after pushing to your own repo:** replace the Akuwatoga URLs in this README (Download / Report an Issue / clone), in `.github/workflows/release.yml`, and set `repoOwner`/`repoName` in `FreeDisplay/Services/UpdateService.swift` (currently placeholders, so the in-app update check is disabled). Also set your own `DEVELOPMENT_TEAM` in `project.yml` (currently `29W56PHWJR`, the fork author's team) or build unsigned with `CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO` (see below).
 
 > **macOS 26 (Tahoe) compatible fork of [FreeDisplay](https://github.com/huberdf/FreeDisplay)** — free & open-source BetterDisplay alternative, rebuilt for Apple's new DCP display stack.
 
@@ -37,7 +41,7 @@ See git history on the [`tahoe-compat`](https://github.com/Akuwatoga/FreeDisplay
 | Keyboard Brightness Keys for External Displays | ✅ | Intercepts brightness keys when cursor is on external display, shows native macOS OSD |
 | Auto Brightness Sync | ✅ | Syncs external display brightness with built-in display changes |
 | HiDPI Virtual Displays | ✅ | Creates HiDPI dummy displays via CGVirtualDisplay private API |
-| Display Arrangement | ✅ | Position displays (external above built-in, etc.) |
+| Display Arrangement | ✅ | Position displays (drag in the canvas, or auto-arrange externals left/right/above on connect — default: left) |
 | Resolution & HiDPI Switching | ✅ | Browse and switch all available display modes including HiDPI |
 | ICC Color Profile Management | ✅ | Switch color profiles per display via ColorSync |
 | Image Adjustment (Gamma/Temperature) | ✅ | Software contrast, color temperature, RGB channels, invert |
@@ -73,11 +77,13 @@ See git history on the [`tahoe-compat`](https://github.com/Akuwatoga/FreeDisplay
 
 ```bash
 brew install xcodegen
-git clone https://github.com/Akuwatoga/FreeDisplay.git
-cd FreeDisplay
-git checkout tahoe-compat
+git clone https://github.com/<your-username>/<your-repo>.git
+cd <your-repo>
 xcodegen generate
+# Unsigned local build (no Apple Developer account needed):
 xcodebuild -scheme FreeDisplay -configuration Release CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO build
+# Then copy build/Build/Products/Release/FreeDisplay.app to /Applications
+# (or open FreeDisplay.xcodeproj in Xcode and press Cmd+R).
 ```
 
 ---
@@ -132,8 +138,7 @@ FreeDisplay sits in your menu bar and talks directly to your displays:
 
 | Branch | Purpose |
 |---|---|
-| `main` | Tracks upstream `huberdf/FreeDisplay` |
-| `tahoe-compat` | Active development branch for macOS 26 (Tahoe) compatibility |
+| `main` | English-only fork, based on Akuwatoga v1.0.5-tahoe.1 (Tahoe/DCP fixes included) |
 
 Releases are tagged following semantic versioning with a Tahoe channel suffix (e.g. `v1.0.1-tahoe.1`).
 
