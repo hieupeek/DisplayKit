@@ -205,15 +205,12 @@ Repo name is still to be confirmed by the user. When it is:
 
 ```bash
 cd ~/workspace/FreeDisplay-en
-git remote add origin https://github.com/<your-username>/<your-repo>.git
+git remote add origin https://github.com/hieupeek/DisplayKit.git
 git branch -M main
 git push -u origin main
 ```
 
-Also replace these Akuwatoga URLs with your repo's URL after pushing:
-`README.md` (Download Latest Release / Report an Issue / clone),
-`.github/workflows/release.yml` (release-body README link),
-`FreeDisplay/Services/UpdateService.swift` (`repoOwner` / `repoName`).
+Done before pushing (commit `Point repo at hieupeek/DisplayKit`): `README.md` (Download / Report an Issue), `.github/workflows/release.yml` (release-body README link) and `FreeDisplay/Services/UpdateService.swift` (`repoOwner = "hieupeek"`, `repoName = "DisplayKit"`) now point at hieupeek/DisplayKit. Attribution to Akuwatoga/huberdf remains in README/TRANSLATION.
 
 ## Manual test checklist (on the MacBook Air, macOS 27.2.1, ARZOPA external)
 

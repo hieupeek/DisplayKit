@@ -4,7 +4,7 @@
 >
 > **Auto-arrange on connect:** when an external display is plugged in, it is placed on the **left** of the built-in display by default (external at (0, 0), built-in to its right) — change it in the app under Arrange Displays → "Auto-arrange on connect" (Left / Right / Above / Off). The old `fd.arrangement.externalAbove` setting is migrated automatically. See [TRANSLATION.md](TRANSLATION.md#auto-arrange-on-connect).
 >
-> **TODO after pushing to your own repo:** replace the Akuwatoga URLs in this README (Download / Report an Issue / clone), in `.github/workflows/release.yml`, and set `repoOwner`/`repoName` in `FreeDisplay/Services/UpdateService.swift` (currently placeholders, so the in-app update check is disabled). Also set your own `DEVELOPMENT_TEAM` in `project.yml` (currently `29W56PHWJR`, the fork author's team) or build unsigned with `CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO` (see below).
+> **Published as [hieupeek/DisplayKit](https://github.com/hieupeek/DisplayKit).** In-app update check points at this repo. Still set your own `DEVELOPMENT_TEAM` in `project.yml` (currently `29W56PHWJR`, the fork author's team) or build unsigned with `CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO` (see below).
 
 > **macOS 26 (Tahoe) compatible fork of [FreeDisplay](https://github.com/huberdf/FreeDisplay)** — free & open-source BetterDisplay alternative, rebuilt for Apple's new DCP display stack.
 
@@ -12,7 +12,7 @@ BetterDisplay is a great app, but its best features are locked behind a paid Pro
 
 This fork brings the upstream project up to date with **macOS 26 (Tahoe)**, where Apple's display subsystem has been substantially restructured around a new DCP (Display Co-Processor) driver model. Several upstream code paths silently broke under Tahoe; this fork ships the fixes.
 
-[Download Latest Release](https://github.com/Akuwatoga/FreeDisplay/releases/latest) · [Report an Issue](https://github.com/Akuwatoga/FreeDisplay/issues) · [Upstream Project](https://github.com/huberdf/FreeDisplay)
+[Download Latest Release](https://github.com/hieupeek/DisplayKit/releases/latest) · [Report an Issue](https://github.com/hieupeek/DisplayKit/issues) · [Upstream Project](https://github.com/huberdf/FreeDisplay)
 
 ---
 
@@ -66,7 +66,7 @@ See git history on the [`tahoe-compat`](https://github.com/Akuwatoga/FreeDisplay
 
 ### Option 1: Download DMG
 
-1. Download `FreeDisplay.dmg` from [Releases](https://github.com/Akuwatoga/FreeDisplay/releases/latest)
+1. Download `DisplayKit.dmg` from [Releases](https://github.com/hieupeek/DisplayKit/releases/latest)
 2. Open the DMG and drag **FreeDisplay.app** to **Applications**
 3. First launch: right-click → **Open** (unsigned app, one-time approval), or strip the quarantine attribute:
    ```bash

@@ -189,7 +189,7 @@ jobs:
 
           ## Documentation
 
-          - [English README](https://github.com/Akuwatoga/FreeDisplay/blob/main/README.md)
+          - [English README](https://github.com/hieupeek/DisplayKit/blob/main/README.md)
           MARKDOWN
 
           echo "----- release body preview -----"

@@ -6,9 +6,9 @@ import AppKit
 final class UpdateService: ObservableObject, @unchecked Sendable {
     static let shared = UpdateService()
 
-    // Set these when the repo is published. Placeholder values disable the update check.
-    private let repoOwner = "OWNER"
-    private let repoName  = "FreeDisplay"
+    // Published repo: hieupeek/DisplayKit — update check enabled.
+    private let repoOwner = "hieupeek"
+    private let repoName  = "DisplayKit"
 
     // Current app bundle version (CFBundleShortVersionString)
     let currentVersion: String = {
